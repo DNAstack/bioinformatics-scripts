@@ -1,0 +1,124 @@
+#!/bin/bash
+#
+# Recursively build and tag docker images in a directory
+
+set -eEuo pipefail
+
+DEFAULT_DOCKER_CONTEXT_DIR=$(readlink -f "$(dirname "$0")")
+
+usage() {
+cat << EOF
+
+  Recursively build and tag docker images in a directory
+  Usage: $0 [OPTIONS]
+
+  OPTIONS
+  -h  Display this message and exit
+  -d  Directory to find Dockerfiles/build contexts in [${DEFAULT_DOCKER_CONTEXT_DIR}]
+  -c  Container registry
+  -p  Also push built images
+
+EOF
+}
+
+log() {
+  echo "$(tput bold)$(tput setaf 110)[$(date +'%Y-%m-%dT%H:%M:%S%z')] $@$(tput sgr0)" >&1
+}
+
+err() {
+  echo "$(tput bold)$(tput setaf 203)[$(date +'%Y-%m-%dT%H:%M:%S%z')]: $@$(tput sgr0)" >&2
+}
+
+build_docker_image() {
+  local dockerfile_path="$1"
+  local docker_context_dir="$2"
+  local -a build_args
+  local -a varnames
+  local env_file="${docker_context_dir}/build.env"
+
+  if [[ -s "${env_file}" ]]; then
+    nobuild=$(grep 'NOBUILD=true' "${env_file}" || true)
+    if [[ -n "${nobuild}" ]]; then
+      log "No-build set for docker context [${docker_context_dir}]; skipping"
+      return
+    fi
+    while read -r build_arg || [[ -n "${build_arg}" ]]; do
+      varname=$(echo "${build_arg}" | cut -d = -f 1)
+      value=$(echo "${build_arg}" | cut -d = -f 2 | envsubst)
+
+      set +u
+      if [[ -n "${!varname}" ]]; then
+        err "[WARN] Overwriting existing env variable [${varname}], value [${!varname}] with value [${value}]"
+      fi
+      set -u
+
+      export "${varname}=${value}"
+
+      build_args+=(--build-arg "${varname}=${value}")
+      varnames+=("${varname}")
+    done < "${env_file}"
+  else
+    err "[ERROR] No env file found for docker context [${docker_context_dir}]"
+    err "[ERROR] Minimally define IMAGE_NAME=xxx and IMAGE_TAG=xxx in [${env_file}] and try again."
+    exit 1
+  fi
+
+  local image_name
+  local image_tag
+  for varname in "${varnames[@]}"; do
+    if [[ "${varname}" == "IMAGE_NAME" ]]; then
+      image_name=${!varname}
+    elif [[ "${varname}" == "IMAGE_TAG" ]]; then
+      image_tag=${!varname}
+    fi
+    unset "${varname}"
+  done
+
+  if [[ -z "${image_name}" ]]; then
+    err "[ERROR] No IMAGE_NAME defined for docker context [${docker_context_dir}]"
+    err "[ERROR] Set IMAGE_NAME in [${env_file}] and try again."
+    exit 1
+  fi
+
+  if [[ -z "${image_tag}" ]]; then
+    err "[ERROR] No IMAGE_TAG defined for docker context [${docker_context_dir}]"
+    err "[ERROR] Set IMAGE_TAG in [${env_file}] and try again."
+    exit 1
+  fi
+
+  local tagged_image="${CONTAINER_REGISTRY:+"${CONTAINER_REGISTRY}/"}${image_name}:${image_tag}"
+  log "Building ${tagged_image}"
+
+  docker build \
+    --rm \
+    "${build_args[@]}" \
+    -t "${tagged_image}" \
+    -f "${dockerfile_path}" \
+    "${docker_context_dir}"
+
+  if [[ "${PUSH_IMAGES}" == 'true' ]]; then
+    log "Pushing ${tagged_image}"
+    docker push "${tagged_image}"
+  fi
+}
+
+while getopts "hd:c:p" OPTION; do
+  case $OPTION in
+    h) usage; exit ;;
+    d) DOCKER_CONTEXT_DIR=$OPTARG ;;
+    c) CONTAINER_REGISTRY=$OPTARG;;
+    p) PUSH_IMAGES='true' ;;
+    \?) usage; exit ;;
+  esac
+done
+
+DOCKER_CONTEXT_DIR=${DOCKER_CONTEXT_DIR:-"${DEFAULT_DOCKER_CONTEXT_DIR}"}
+PUSH_IMAGES=${PUSH_IMAGES:-'false'}
+
+readonly DOCKER_CONTEXT_DIR CONTAINER_REGISTRY PUSH_IMAGES
+
+# Build regular docker images
+while read -r dockerfile_path; do
+  docker_context_dir=$(dirname "${dockerfile_path}")
+  build_docker_image "${dockerfile_path}" "${docker_context_dir}"
+done < <(find "${DOCKER_CONTEXT_DIR}" -type f -name Dockerfile)
