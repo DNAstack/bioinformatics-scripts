@@ -9,14 +9,16 @@ DEFAULT_DOCKER_CONTEXT_DIR=$(readlink -f "$(dirname "$0")")
 usage() {
 cat << EOF
 
-  Recursively build and tag docker images in a directory
+  Recursively build and tag docker images in a directory.
+  Dockerfiles must be named Dockerfile and have a corresponding build.env file at the same level that defines at minimum IMAGE_NAME and IMAGE_TAG variables.
+
   Usage: $0 [OPTIONS]
 
   OPTIONS
-  -h  Display this message and exit
-  -d  Directory to find Dockerfiles/build contexts in [${DEFAULT_DOCKER_CONTEXT_DIR}]
-  -c  Container registry
-  -p  Also push built images
+    -h  Display this message and exit
+    -d  Directory to find Dockerfiles/build contexts in [${DEFAULT_DOCKER_CONTEXT_DIR}]
+    -c  Container registry
+    -p  Also push built images
 
 EOF
 }
@@ -117,8 +119,13 @@ PUSH_IMAGES=${PUSH_IMAGES:-'false'}
 
 readonly DOCKER_CONTEXT_DIR CONTAINER_REGISTRY PUSH_IMAGES
 
-# Build regular docker images
+IMAGES_TO_BUILD=$(find "${DOCKER_CONTEXT_DIR}" -type f -name Dockerfile)
+if [[ "${#IMAGES_TO_BUILD}" -eq 0 ]]; then
+  usage
+  exit
+fi
+
 while read -r dockerfile_path; do
   docker_context_dir=$(dirname "${dockerfile_path}")
   build_docker_image "${dockerfile_path}" "${docker_context_dir}"
-done < <(find "${DOCKER_CONTEXT_DIR}" -type f -name Dockerfile)
+done <<< "${IMAGES_TO_BUILD}"
