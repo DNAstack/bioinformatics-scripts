@@ -76,6 +76,7 @@ build_docker_image() {
     unset "${varname}"
   done
 
+  set +u
   if [[ -z "${image_name}" ]]; then
     err "[ERROR] No IMAGE_NAME defined for docker context [${docker_context_dir}]"
     err "[ERROR] Set IMAGE_NAME in [${env_file}] and try again."
@@ -87,6 +88,7 @@ build_docker_image() {
     err "[ERROR] Set IMAGE_TAG in [${env_file}] and try again."
     exit 1
   fi
+  set -u
 
   local tagged_image="${CONTAINER_REGISTRY:+"${CONTAINER_REGISTRY}/"}${image_name}:${image_tag}"
   log "Building ${tagged_image}"
