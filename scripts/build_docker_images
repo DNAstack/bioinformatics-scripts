@@ -10,9 +10,9 @@ usage() {
 cat << EOF
 
   Recursively build and tag docker images in a directory.
-  Dockerfiles must be named Dockerfile and have a corresponding build.env file at the same level that defines at minimum IMAGE_NAME and IMAGE_TAG variables.
+  Docker definitions are discovered by identifying build.env files in the docker_context_dir. build.env must define at minimum IMAGE_NAME and IMAGE_TAG variables.
 
-  Usage: $0 [OPTIONS]
+  Usage: $0 -d docker_context_dir [OPTIONS]
 
   OPTIONS
     -h  Display this message and exit
