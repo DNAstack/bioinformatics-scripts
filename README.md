@@ -111,7 +111,7 @@ getMeta -r ${workflow_id} | jq '.calls | keys'
 
 # Get information about a specific call
 # Note that the call key must be double quoted since it contains a `.` character
-# The formar of call keys is workflow_name.task_name
+# The format of call keys is workflow_name.task_name
 getMeta -r ${workflow_id} | jq '.calls."hello_world.say_hello"'
 
 # Get the location of the stderr file for a specific call
