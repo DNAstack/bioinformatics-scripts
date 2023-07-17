@@ -56,3 +56,64 @@ These variables have special meanings when the Docker image is being built. † 
 # build and push all Docker images defined in the `docker` directory to the provided container registry
 ./build_docker_images -d docker -c dnastack -p
 ```
+
+## [Cromwell interaction scripts](scripts/cromwell)
+
+### [getIDs](scripts/cromwell/getIDs)
+
+Get the status for recently run workflows. Interacts with Cromwell running in server mode. Set and export `CROMWELL_URL` to change the location where your Cromwell is running in server mode (defaults to `localhost:8000`).
+
+The output columns are workflow name, workflow ID, and workflow status.
+
+#### Usage
+
+```bash
+# Use a different Cromwell URL (default: localhost:8000)
+export CROMWELL_URL=localhost:9000
+
+# Get information about the last 10 workflows to run
+getIDs
+
+# Get information about the last 30 workflows to run
+getIDs 30
+
+# Get information about the last 5 workflows that are currently running (there may not be 5 running currently)
+getIDs -r 5
+```
+
+
+### [getMeta](scripts/cromwell/getMeta)
+
+Get metadata for a Cromwell workflow run. Interacts with Cromwell running in server mode. Set and export `CROMWELL_URL` to change the location where your Cromwell is running in server mode (defaults to `localhost:8000`).
+
+#### Usage
+
+```bash
+# Use a different Cromwell URL (default: localhost:8000)
+export CROMWELL_URL=localhost:9000
+# set this to a specific workflow ID you want info about, e.g. check the output of getIDs
+workflow_id=1c0c4711-c5d6-46dc-b176-c52fb612c1c6
+
+# Get information about a workflow
+getMeta ${workflow_id}
+
+# Save the metadata from a workflow to a file (named ${workflow_id}.meta.json)
+getMeta -s ${workflow_id}
+
+# Get raw metadata; retrieve workflow inputs using `jq`
+getMeta -r ${workflow_id} | jq '.inputs'
+
+# Get workflow status
+getMeta -r ${workflow_id} | jq '.status'
+
+# List task calls
+getMeta -r ${workflow_id} | jq '.calls | keys'
+
+# Get information about a specific call
+# Note that the call key must be double quoted since it contains a `.` character
+# The formar of call keys is workflow_name.task_name
+getMeta -r ${workflow_id} | jq '.calls."hello_world.say_hello"'
+
+# Get the location of the stderr file for a specific call
+getMeta -r ${workflow_id} | jq '.calls."hello_world.say_hello"[0].stderr'
+```

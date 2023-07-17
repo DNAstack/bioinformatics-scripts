@@ -1,0 +1,73 @@
+#!/bin/bash
+
+###################################################################################
+# getIDs: Get the status for recently run workflows                               #
+# Copyright (C) 2023  Heather Ward - DNAstack                                     #
+#                                                                                 #
+# This program is free software; you can redistribute it and/or                   #
+# modify it under the terms of the GNU General Public License                     #
+# as published by the Free Software Foundation, version 2 of the                  #
+# License.                                                                        #
+#                                                                                 #
+# This program is distributed in the hope that it will be useful,                 #
+# but WITHOUT ANY WARRANTY; without even the implied warranty of                  #
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the                   #
+# GNU General Public License for more details.                                    #
+#                                                                                 #
+# You should have received a copy of the GNU General Public License               #
+# along with this program; if not, write to the Free Software                     #
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA. #
+###################################################################################
+
+set -euo pipefail
+
+usage() {
+cat << EOF
+
+	Get the status for the most recently run workflows
+	Defaults to using Cromwell running at localhost:8000
+		Set and export CROMWELL_URL to target a different Cromwell location
+
+	Usage: $(basename "${0}") [OPTIONS] [n_results [10]]
+
+	OPTIONS
+		-h		Display this message and exit
+		-r		Show only running workflows
+
+EOF
+}
+
+reverse() {
+	architecture=$(uname -s)
+	case "${architecture}" in
+		Darwin*) tail -r;;
+		*) tac;;
+	esac
+}
+
+while getopts "hr" OPTION
+do
+	case ${OPTION} in
+		h) usage; exit 1;;
+		r) STATUS="&status=Running";;
+		\?) usage; exit 1;;
+	esac
+done
+
+STATUS=${STATUS:-}
+CROMWELL_URL=${CROMWELL_URL:-localhost:8000}
+
+if [[ "${*: -1}" =~ ^[0-9]+$ ]]; then
+	n_results="${*: -1}"
+else
+	n_results=10
+fi
+
+curl \
+	-s \
+	-X GET \
+	-H "accept:application/json" \
+	"${CROMWELL_URL}/api/workflows/v1/query?page=1&pageSize=${n_results}${STATUS}" \
+| jq -r '.results[] | [.name, .id, .status] | @csv' \
+| sed -e 's/"//g' -e 's/,/\t/g' \
+| reverse
