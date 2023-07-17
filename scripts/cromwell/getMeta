@@ -1,0 +1,82 @@
+#!/bin/bash
+
+###################################################################################
+# getMeta: Get metadata for a Cromwell workflow run                               #
+# Copyright (C) 2023  Heather Ward - DNAstack                                     #
+#                                                                                 #
+# This program is free software; you can redistribute it and/or                   #
+# modify it under the terms of the GNU General Public License                     #
+# as published by the Free Software Foundation, version 2 of the                  #
+# License.                                                                        #
+#                                                                                 #
+# This program is distributed in the hope that it will be useful,                 #
+# but WITHOUT ANY WARRANTY; without even the implied warranty of                  #
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the                   #
+# GNU General Public License for more details.                                    #
+#                                                                                 #
+# You should have received a copy of the GNU General Public License               #
+# along with this program; if not, write to the Free Software                     #
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA. #
+###################################################################################
+
+IFS=$'\n'
+
+set -euo pipefail
+
+usage() {
+cat << EOF
+
+	Get metadata for a given workflow
+	Defaults to using Cromwell running at localhost:8000
+		Set and export CROMWELL_URL to target a different Cromwell location
+
+	Usage: $(basename "${0}") [OPTIONS] workflow_id
+
+	OPTIONS
+		-h		Display this message and exit
+		-r		Raw output
+		-s		Save to a file name \${wf_id}.meta.json rather than outputting to stdout
+
+EOF
+}
+
+while getopts "hrs" OPTION; do
+	case ${OPTION} in
+		h) usage; exit 1;;
+		r) RAW=true;;
+		s) SAVE=true;;
+		\?) usage; exit 1;;
+	esac
+done
+
+RAW=${RAW:-}
+SAVE=${SAVE:-}
+CROMWELL_URL=${CROMWELL_URL:-localhost:8000}
+
+if [[ "${#}" -eq 0 ]]; then
+	usage
+	err "Must provide workflow ID"
+	exit 1
+else
+	WORKFLOW_ID=${*: -1}
+fi
+
+if [[ "${RAW}" == "true" ]]; then
+	curl \
+		-s \
+		-X GET \
+		-H "accept: application/json" \
+		"${CROMWELL_URL}/api/workflows/v1/${WORKFLOW_ID}/metadata?expandSubWorkflows=false"
+elif [[ "${SAVE}" == "true" ]]; then
+	curl \
+		-X GET \
+		-H "accept: application/json" \
+		"${CROMWELL_URL}/api/workflows/v1/${WORKFLOW_ID}/metadata?expandSubWorkflows=false" \
+		--output "${WORKFLOW_ID}.meta.json"
+else
+	curl \
+		-X GET \
+		-H "accept: application/json" \
+		"${CROMWELL_URL}/api/workflows/v1/${WORKFLOW_ID}/metadata?expandSubWorkflows=false" \
+	| jq
+fi
