@@ -36,7 +36,7 @@ cat << EOF
     -d  Directory to find Dockerfiles/build contexts in [${DEFAULT_DOCKER_CONTEXT_DIR}]
     -c  Container registry
     -p  Also push built images
-    -x  Use 'docker buildx' command 
+    -x  Use the 'docker buildx' command to build AMD-64 images (for example from an ARM-based Mac)
 
 EOF
 }
@@ -115,31 +115,13 @@ build_docker_image() {
     tagged_image="${CONTAINER_REGISTRY:+"${CONTAINER_REGISTRY}/"}${IMAGE_NAME}:${IMAGE_TAG}"
     log "Building ${tagged_image}"
 
-    # Check whether to use docker build or docker buildx
-    if [[ "${USE_BUILDX}" == 'true' ]]; then
-      docker_cmd="docker buildx build"
-    else 
-      docker_cmd="docker build"
-    fi
+    $DOCKER_BUILD_COMMAND \
+      --rm \
+      "${build_args[@]}" \
+      -t "${tagged_image}" \
+      -f "${dockerfile}" \
+      "${docker_context_dir}"
 
-    # Build image with either build or buildx
-    if [[ "${USE_BUILDX}" == 'true' ]]; then 
-      $docker_cmd \
-        --platform linux/amd64 \
-        --rm \
-        "${build_args[@]}" \
-        -t "${tagged_image}" \
-        -f "${dockerfile}" \
-        "${docker_context_dir}"
-    else 
-      $docker_cmd \
-        --rm \
-        "${build_args[@]}" \
-        -t "${tagged_image}" \
-        -f "${dockerfile}" \
-        "${docker_context_dir}"
-    fi 
-    
     if [[ "${PUSH_IMAGES}" == 'true' ]]; then
       log "Pushing ${tagged_image}"
       docker push "${tagged_image}"
@@ -153,16 +135,16 @@ while getopts "hd:c:p:x" OPTION; do
     d) DOCKER_CONTEXT_DIR=$OPTARG ;;
     c) CONTAINER_REGISTRY=$OPTARG;;
     p) PUSH_IMAGES='true' ;;
-    x) USE_BUILDX='true' ;;
+    x) DOCKER_BUILD_COMMAND='docker buildx build --platform linux/amd64' ;;
     \?) usage; exit ;;
   esac
 done
 
 DOCKER_CONTEXT_DIR=${DOCKER_CONTEXT_DIR:-"${DEFAULT_DOCKER_CONTEXT_DIR}"}
 PUSH_IMAGES=${PUSH_IMAGES:-'false'}
-USE_BUILDX=${USE_BUILDX:-'false'}
+DOCKER_BUILD_COMMAND=${DOCKER_BUILD_COMMAND:-'docker build'}
 
-readonly DOCKER_CONTEXT_DIR CONTAINER_REGISTRY PUSH_IMAGES USE_BUILDX
+readonly DOCKER_CONTEXT_DIR CONTAINER_REGISTRY PUSH_IMAGES DOCKER_BUILD_COMMAND
 
 IMAGES_TO_BUILD=$(find "${DOCKER_CONTEXT_DIR}" -type f -name build.env)
 if [[ "${#IMAGES_TO_BUILD}" -eq 0 ]]; then
