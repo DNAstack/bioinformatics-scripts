@@ -59,6 +59,9 @@ These variables have special meanings when the Docker image is being built. † 
 
 # build and push all Docker images defined in the `docker` directory to the provided container registry
 ./build_docker_images -d docker -c dnastack -p
+
+# build an image targetting AMD-64 from an ARM-based Mac (requires [docker buildx](https://github.com/docker/buildx))
+./build_docker_images -d docker -x
 ```
 
 
