@@ -1,0 +1,180 @@
+#!/bin/bash
+
+#####################################################################
+# Chunk BAM: efficiently chunk a BAM by BGZF block                  #
+# Copyright (C)  2023 Heather Ward                                  #
+#                                                                   #
+# This program is free software; you can redistribute it and/or     #
+# modify it under the terms of the GNU General Public License       #
+# as published by the Free Software Foundation, version 2 of the    #
+# license.                                                          #
+#                                                                   #
+# This program is distributed in the hope that it will be useful,   #
+# but WITHOUT ANY WARRANTY; without even the implied warranty of    #
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the     #
+# GNU General Public License for more details.                      #
+#                                                                   #
+# You should have received a copy of the GNU General Public License #
+# along with this program; if not, write to the Free Software       #
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA     #
+# 02110-1301, USA.                                                  #
+#####################################################################
+
+# BAM spec: https://samtools.github.io/hts-specs/SAMv1.pdf
+
+set -euo pipefail
+
+trap cleanup EXIT
+
+usage() {
+cat << EOF
+
+	Chunk a BAM file by block
+	Usage: $0 -b bam [-n n_chunks]
+
+	OPTIONS
+		-h	Display this message and exit
+		-b	Path to BAM file
+		-n	Number of chunks to split the BAM into [6]
+
+EOF
+}
+
+# Get n_bytes starting at position offset
+get_bytes() {
+	offset=$1
+	n_bytes=$2
+	file=$3
+
+	end_position=$((offset + n_bytes))
+
+	head \
+		-c "${end_position}" \
+		"${file}" \
+	| tail \
+		-c "${n_bytes}"
+}
+
+# Get the hex value of n_bytes starting at position offset
+get_bytes_hex() {
+	offset=$1
+	n_bytes=$2
+	file=$3
+
+	od -j "${offset}" \
+		-N "${n_bytes}" \
+		-A n \
+		-x \
+		--endian big \
+		"${file}" \
+	| tr -d ' '
+}
+
+# Get the unsigned decimal value of n_bytes starting at position offset
+get_bytes_decimal() {
+	offset=$1
+	n_bytes=$2
+	file=$3
+
+	od -j "${offset}" \
+		-N "${n_bytes}" \
+		-A n \
+		-t "u${n_bytes}" \
+		"${file}" \
+	| tr -d ' '
+}
+
+cleanup() {
+	if [[ -s header.bam ]]; then
+		rm header.bam
+	fi
+}
+
+while getopts "hb:n:" OPTION; do
+	case ${OPTION} in
+		h) usage; exit;;
+		b) BAM=${OPTARG};;
+		n) N_CHUNKS=${OPTARG};;
+		/?) usage; exit 1;;
+	esac
+done
+
+BAM=${BAM:-}
+N_CHUNKS=${N_CHUNKS:-6}
+
+if [[ -z "${BAM}" ]]; then
+	usage
+	echo "[ERROR] Must provide -b bam"
+	exit 1
+fi
+
+if [[ -z "${N_CHUNKS}" ]]; then
+	usage
+	echo "[ERROR] Must provide -n n_chunks"
+	exit 1
+fi
+
+EOF_MARKER="\x1f\x8b\x08\x04\x00\x00\x00\x00\x00\xff\x06\x00\x42\x43\x02\x00\x1b\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+BAM_BASENAME=$(basename "${BAM}" ".bam")
+
+# BAM HEADER
+# The header is the first bgzf compressed block in the BAM file
+## Sanity check opening bytes - BGZF format with extra field of SLEN 2 expected
+expected_gzip_header="1F8B08040000000000FF060042430200"
+gzip_header=$(get_bytes_hex 0 16 "${BAM}" | tr '[:lower:]' '[:upper:]')
+if [[ "${gzip_header}" != "${expected_gzip_header}" ]]; then
+	echo "[ERROR] Encountered unexpected gzip header; exiting"
+	echo -e "\t${gzip_header}"
+	exit 1
+fi
+
+## value of BSIZE (2 byte integer at offset 16) is total block size minus 1, including the header fields
+header_block_size=$(($(get_bytes_decimal 16 2 "${BAM}") + 1))
+get_bytes 0 "${header_block_size}" "${BAM}" > header.bam
+
+
+# BAM DATA
+## Determine the byte offsets and number of blocks in the file, excluding the header block (first block) and the EOF marker (last block)
+block_offsets=$(LANG=C grep \
+		--only-matching \
+		--byte-offset \
+		--binary \
+		--text \
+		--perl-regexp "\x1f\x8b\x08\x04\x00\x00\x00\x00\x00\xff\x06\x00\x42\x43\x02" \
+		"${BAM}" \
+	| sed '1d;$d' \
+	| cut -d : -f 1)
+n_blocks=$(echo "${block_offsets}" | wc -l)
+
+n_blocks_per_chunk=$((n_blocks / N_CHUNKS))
+n_remaining_blocks=$((n_blocks % N_CHUNKS))
+
+## Determine which blocks will end up in which chunk
+## The block_offset tracks extra blocks (i.e. those that don't fit evenly into the N_CHUNKS) that have been used in earlier chunks
+block_offset=0
+for chunk_index in $(seq 0 "$((N_CHUNKS - 1))"); do
+	chunk_filename="${BAM_BASENAME}.chunk_${chunk_index}.bam"
+
+	# Determine the first and last block in the chunk
+	first_block_index=$((chunk_index * n_blocks_per_chunk + block_offset + 1))
+	last_block_index=$((first_block_index + n_blocks_per_chunk - 1))
+	if [[ "${n_remaining_blocks}" -gt 0 ]]; then
+		last_block_index=$((last_block_index + 1))
+		n_remaining_blocks=$((n_remaining_blocks - 1))
+		block_offset=$((block_offset + 1))
+	fi
+
+	# Determine the start offset of the first block in the chunk
+	start_offset=$(($(echo "${block_offsets}" | head -$((first_block_index)) | tail -1)))
+	# # Determine the end offset of the last block in the chunk
+	end_offset_start=$(($(echo "${block_offsets}" | head -$((last_block_index)) | tail -1) + 1))
+	last_block_size=$(get_bytes_decimal "$((end_offset_start + 15))" 2 "${BAM}")
+	end_offset=$((end_offset_start + last_block_size))
+
+	# The total number of bytes in the chunk
+	n_bytes_chunk=$((end_offset - start_offset))
+
+	cat header.bam > "${chunk_filename}"
+	get_bytes "${start_offset}" "${n_bytes_chunk}" "${BAM}" >> "${chunk_filename}"
+	echo -n -e "${EOF_MARKER}" >> "${chunk_filename}"
+done
