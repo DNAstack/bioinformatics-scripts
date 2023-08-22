@@ -2,6 +2,10 @@
 
 Miscellaneous scripts and documenation from the DNAstack bioinformatics team.
 
+1. [build_docker_images](#build-docker-images)
+0. [chunk_bam](#chunk_bam)
+0. [Cromwell: getIDs](#getids)
+0. [Cromwell: getMeta](#getmeta)
 
 ## Scripts
 
@@ -56,6 +60,37 @@ These variables have special meanings when the Docker image is being built. † 
 # build and push all Docker images defined in the `docker` directory to the provided container registry
 ./build_docker_images -d docker -c dnastack -p
 ```
+
+
+### [chunk_bam](scripts/chunk_bam)
+
+`chunk_bam -b bam_file [-n n_chunks]`
+
+Chunk a BAM into n_chunks. Splits the BAM by BGZF block. Defaults to 6 output chunks.
+
+Output chunks will be materialized in the `pwd`, named `${BAM_BASENAME}.chunk_${chunk_index}.bam`.
+
+#### Usage
+```bash
+# Chunk an input bam into 6 chunks (the default)
+./chunk_bam -b sampleA.bam
+
+## Output
+├── sampleA.chunk_0.bam
+├── sampleA.chunk_1.bam
+├── sampleA.chunk_2.bam
+├── sampleA.chunk_3.bam
+├── sampleA.chunk_4.bam
+└── sampleA.chunk_5.bam
+
+# Chunk an input bam into 2 chunks
+./chunk_bam -b sampleA.bam -n 2
+
+## Output
+├── sampleA.chunk_0.bam
+└── sampleA.chunk_1.bam
+```
+
 
 ## [Cromwell interaction scripts](scripts/cromwell)
 
