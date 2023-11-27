@@ -129,7 +129,7 @@ build_docker_image() {
   )
 }
 
-while getopts "hd:c:p:x" OPTION; do
+while getopts "hd:c:px" OPTION; do
   case $OPTION in
     h) usage; exit ;;
     d) DOCKER_CONTEXT_DIR=$OPTARG ;;
