@@ -37,20 +37,22 @@ cat << EOF
     -c  Container registry
     -p  Also push built images
     -x  Use the 'docker buildx' command to build AMD-64 images (for example from an ARM-based Mac)
+    -b  Comma-separated global build arguments (VAR=value,VAR2=value2). Will be passed to every image build.
 
 EOF
 }
 
 log() {
-  echo "$(tput bold)$(tput setaf 110)[$(date +'%Y-%m-%dT%H:%M:%S%z')] $@$(tput sgr0)" >&1
+  echo "$(tput bold)$(tput setaf 110)[$(date +'%Y-%m-%dT%H:%M:%S%z')] $*$(tput sgr0)" >&1
 }
 
 err() {
-  echo "$(tput bold)$(tput setaf 203)[$(date +'%Y-%m-%dT%H:%M:%S%z')]: $@$(tput sgr0)" >&2
+  echo "$(tput bold)$(tput setaf 203)[$(date +'%Y-%m-%dT%H:%M:%S%z')]: $*$(tput sgr0)" >&2
 }
 
 build_docker_image() {
   local build_env_file="$1"
+  local global_build_args="$2"
   local docker_context_dir=$(dirname "${build_env_file}")
   local -a build_args
 
@@ -112,10 +114,15 @@ build_docker_image() {
         > "${populated_conda_environment}"
     fi
 
+    # Add global build args provided on the command line
+    while read -r global_build_arg || [[ -n "${global_build_arg}" ]]; do
+      build_args+=(--build-arg "${global_build_arg}")
+    done < <(echo -n "${global_build_args}" | tr ',' '\n')
+
     tagged_image="${CONTAINER_REGISTRY:+"${CONTAINER_REGISTRY}/"}${IMAGE_NAME}:${IMAGE_TAG}"
     log "Building ${tagged_image}"
 
-    $DOCKER_BUILD_COMMAND \
+    ${DOCKER_BUILD_COMMAND} \
       --rm \
       "${build_args[@]}" \
       -t "${tagged_image}" \
@@ -129,13 +136,14 @@ build_docker_image() {
   )
 }
 
-while getopts "hd:c:px" OPTION; do
-  case $OPTION in
+while getopts "hd:c:pxb:" OPTION; do
+  case ${OPTION} in
     h) usage; exit ;;
-    d) DOCKER_CONTEXT_DIR=$OPTARG ;;
-    c) CONTAINER_REGISTRY=$OPTARG;;
+    d) DOCKER_CONTEXT_DIR=${OPTARG} ;;
+    c) CONTAINER_REGISTRY=${OPTARG};;
     p) PUSH_IMAGES='true' ;;
     x) DOCKER_BUILD_COMMAND='docker buildx build --platform linux/amd64' ;;
+    b) GLOBAL_BUILD_ARGS=${OPTARG};;
     \?) usage; exit ;;
   esac
 done
@@ -144,7 +152,7 @@ DOCKER_CONTEXT_DIR=${DOCKER_CONTEXT_DIR:-"${DEFAULT_DOCKER_CONTEXT_DIR}"}
 PUSH_IMAGES=${PUSH_IMAGES:-'false'}
 DOCKER_BUILD_COMMAND=${DOCKER_BUILD_COMMAND:-'docker build'}
 
-readonly DOCKER_CONTEXT_DIR CONTAINER_REGISTRY PUSH_IMAGES DOCKER_BUILD_COMMAND
+readonly DOCKER_CONTEXT_DIR CONTAINER_REGISTRY PUSH_IMAGES DOCKER_BUILD_COMMAND GLOBAL_BUILD_ARGS
 
 IMAGES_TO_BUILD=$(find "${DOCKER_CONTEXT_DIR}" -type f -name build.env)
 if [[ "${#IMAGES_TO_BUILD}" -eq 0 ]]; then
@@ -153,5 +161,5 @@ if [[ "${#IMAGES_TO_BUILD}" -eq 0 ]]; then
 fi
 
 while read -r build_env_file; do
-  build_docker_image "${build_env_file}"
+  build_docker_image "${build_env_file}" "${GLOBAL_BUILD_ARGS}"
 done <<< "${IMAGES_TO_BUILD}"

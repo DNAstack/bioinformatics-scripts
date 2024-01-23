@@ -62,6 +62,9 @@ These variables have special meanings when the Docker image is being built. † 
 
 # build an image targetting AMD-64 from an ARM-based Mac (requires [docker buildx](https://github.com/docker/buildx))
 ./build_docker_images -d docker -x
+
+# Build an image with global build args; useful for not committing secrets to git, but getting them into the built image
+./build_docker_images -d docker -b ARG1=value1,ARG2=value2
 ```
 
 
