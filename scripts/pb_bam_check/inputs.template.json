@@ -1,0 +1,4 @@
+{
+  "pb_bam_check.bam": "/path/to/file.bam",
+  "pb_bam_check.num_reads": 1000000
+}
