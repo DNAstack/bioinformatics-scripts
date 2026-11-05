@@ -78,7 +78,7 @@ build_env_var() {
     unset IMAGE_NAME IMAGE_TAG BUILT_IN
     set -a
     # shellcheck source=/dev/null
-    . "${build_env_file}" > /dev/null 2>&1
+    . "${build_env_file}" > /dev/null
     set +a
     printf '%s' "${!var_name:-}"
   )

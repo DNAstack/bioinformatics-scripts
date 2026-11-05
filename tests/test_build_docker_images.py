@@ -463,3 +463,13 @@ def test_output_printed_by_a_build_env_is_not_read_as_a_value(
     assert len(calls) == 1
     assert "-t tool:1 " in calls[0]
     assert f"-f {plain}/Dockerfile {plain}" in calls[0]
+
+
+def test_errors_from_a_build_env_still_reach_stderr_when_resolving(script, tmp_path):
+    plain = tmp_path / "plain"
+    write_definition(plain)
+    with (plain / "build.env").open("a") as build_env:
+        build_env.write("nosuchcommand_in_build_env\n")
+    resolve = run(script, "-r", str(plain))
+    assert resolve.stdout == resolved(plain)
+    assert "nosuchcommand_in_build_env" in resolve.stderr
