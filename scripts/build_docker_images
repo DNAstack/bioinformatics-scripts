@@ -38,6 +38,17 @@ cat << EOF
     -p  Also push built images
     -x  Use the 'docker buildx' command to build AMD-64 images (for example from an ARM-based Mac)
     -b  Comma-separated global build arguments (VAR=value,VAR2=value2). Will be passed to every image build.
+    -r  Print where the build.env in docker_context_dir resolves, then exit. Prints one line,
+        BUILT_IN_SOURCE<TAB><absolute definition directory>; that is the directory itself
+        unless its build.env sets BUILT_IN.
+
+  POINTERS
+    A build.env that sets BUILT_IN=<git URL> says its image is built in another repository.
+    The image named by IMAGE_NAME and IMAGE_TAG is built from the one definition of it in a
+    local clone of that repository instead. The clone is <dir>/<repository name>, searched
+    in \$GIT_REPO_ROOT (when set) and then in the directory holding the clone of this script.
+    The first one whose origin is the BUILT_IN repository is used. Each source definition is
+    built once however many pointers name it.
 
 EOF
 }
@@ -48,6 +59,180 @@ log() {
 
 err() {
   echo "$(tput bold)$(tput setaf 203)[$(date +'%Y-%m-%dT%H:%M:%S%z')]: $*$(tput sgr0)" >&2
+}
+
+# Print the value of a variable as set by a build.env, or nothing if it is unset.
+build_env_var() {
+  local build_env_file="$1"
+  local var_name="$2"
+  (
+    unset IMAGE_NAME IMAGE_TAG BUILT_IN
+    set -a
+    # shellcheck source=/dev/null
+    . "${build_env_file}"
+    set +a
+    printf '%s' "${!var_name:-}"
+  )
+}
+
+# Print host/owner/repo for a git URL, so SSH and HTTPS forms of one repository agree.
+# Case is ignored for github.com, which treats owner and repository names that way.
+normalise_git_url() {
+  local url="${1%/}"
+  local host path rest
+  url="${url%.git}"
+  url="${url%/}"
+  case "${url}" in
+    *://*)
+      rest="${url#*://}"
+      rest="${rest#*@}"
+      host="${rest%%/*}"
+      path="${rest#*/}"
+      ;;
+    *@*:*)
+      rest="${url#*@}"
+      host="${rest%%:*}"
+      path="${rest#*:}"
+      ;;
+    *)
+      printf '%s\n' "${url}"
+      return
+      ;;
+  esac
+  host="${host%%:*}"
+  host=$(printf '%s' "${host}" | tr '[:upper:]' '[:lower:]')
+  if [[ "${host}" == "github.com" ]]; then
+    path=$(printf '%s' "${path}" | tr '[:upper:]' '[:lower:]')
+  fi
+  printf '%s/%s\n' "${host}" "${path}"
+}
+
+# Print the absolute path of this script, following symlinks without readlink -f.
+script_real_path() {
+  local path="$0"
+  local target dir
+  while [[ -L "${path}" ]]; do
+    target=$(readlink "${path}")
+    dir=$(cd "$(dirname "${path}")" && pwd -P)
+    case "${target}" in
+      /*) path="${target}" ;;
+      *) path="${dir}/${target}" ;;
+    esac
+  done
+  printf '%s/%s\n' "$(cd "$(dirname "${path}")" && pwd -P)" "$(basename "${path}")"
+}
+
+# Print each directory searched for clones of a pointer's source repository, in order.
+clone_search_dirs() {
+  local root top
+  if [[ -n "${GIT_REPO_ROOT:-}" ]]; then
+    root="${GIT_REPO_ROOT%/}"
+    if [[ -d "${root}" ]]; then
+      root=$(cd "${root}" && pwd -P)
+    fi
+    printf '%s\n' "${root}"
+  fi
+  if top=$(git -C "$(dirname "$(script_real_path)")" rev-parse --show-toplevel 2> /dev/null); then
+    top=$(cd "${top}" && pwd -P)
+    if [[ "$(dirname "${top}")" != "${root:-}" ]]; then
+      dirname "${top}"
+    fi
+  fi
+}
+
+# Print a fingerprint of the tracked files under a directory of a clone.
+definition_fingerprint() {
+  local definition_dir="$1"
+  local file
+  (
+    cd "${definition_dir}"
+    while IFS= read -r file; do
+      shasum -a 256 "${file}"
+    done < <(git ls-files .)
+  ) | shasum -a 256
+}
+
+# Print the absolute directory that defines the image a pointer build.env names.
+pointer_source_dir() {
+  local pointer_file="$1"
+  local name tag url want repo dir clone origin first_dir reasons
+  local build_env_file found_name found_tag defined_tags fingerprint first_fingerprint
+  local -a matches=()
+
+  name=$(build_env_var "${pointer_file}" IMAGE_NAME)
+  tag=$(build_env_var "${pointer_file}" IMAGE_TAG)
+  url=$(build_env_var "${pointer_file}" BUILT_IN)
+  want=$(normalise_git_url "${url}")
+  repo="${url%/}"
+  repo="${repo%.git}"
+  repo="${repo##*[/:]}"
+
+  first_dir=""
+  reasons=""
+  clone=""
+  while IFS= read -r dir; do
+    if [[ -z "${first_dir}" ]]; then
+      first_dir="${dir}"
+    fi
+    if [[ ! -d "${dir}/${repo}" ]]; then
+      reasons="${reasons:+${reasons}, }${dir}/${repo} (missing)"
+      continue
+    fi
+    origin=$(git -C "${dir}/${repo}" config --get remote.origin.url 2> /dev/null || true)
+    if [[ -n "${origin}" && "$(normalise_git_url "${origin}")" == "${want}" ]]; then
+      clone="${dir}/${repo}"
+      break
+    fi
+    reasons="${reasons:+${reasons}, }${dir}/${repo} (origin ${origin:-none})"
+  done < <(clone_search_dirs)
+
+  if [[ -z "${clone}" ]]; then
+    err "${name}:${tag} is built in ${url}, which is not cloned in ${reasons:-any directory}; run git clone ${url} \"${first_dir:-<dir>}/${repo}\", or set GIT_REPO_ROOT to the directory holding a clone of it"
+    return 1
+  fi
+
+  defined_tags=""
+  while IFS= read -r build_env_file; do
+    if [[ -n "$(build_env_var "${build_env_file}" BUILT_IN)" ]]; then
+      continue
+    fi
+    found_name=$(build_env_var "${build_env_file}" IMAGE_NAME)
+    if [[ "${found_name}" != "${name}" ]]; then
+      continue
+    fi
+    found_tag=$(build_env_var "${build_env_file}" IMAGE_TAG)
+    if [[ "${found_tag}" == "${tag}" ]]; then
+      matches+=("$(dirname "${build_env_file}")")
+    else
+      defined_tags="${defined_tags:+${defined_tags}, }${name}:${found_tag}"
+    fi
+  done < <(find "${clone}" -name build.env -not -path '*/.git/*' | sort)
+
+  if [[ "${#matches[@]}" -eq 0 ]]; then
+    err "the pointer wants ${name}:${tag}, the clone defines ${defined_tags:-no ${name} image} (${clone})"
+    return 1
+  fi
+
+  first_fingerprint=$(definition_fingerprint "${matches[0]}")
+  for dir in "${matches[@]}"; do
+    fingerprint=$(definition_fingerprint "${dir}")
+    if [[ "${fingerprint}" != "${first_fingerprint}" ]]; then
+      err "${name}:${tag} is defined more than once in ${clone} with different contents: ${matches[*]}"
+      return 1
+    fi
+  done
+
+  (cd "${matches[0]}" && pwd -P)
+}
+
+# Print the definition directory a build.env resolves to: itself, or its pointer's source.
+resolve_definition_dir() {
+  local build_env_file="$1"
+  if [[ -n "$(build_env_var "${build_env_file}" BUILT_IN)" ]]; then
+    pointer_source_dir "${build_env_file}"
+  else
+    (cd "$(dirname "${build_env_file}")" && pwd -P)
+  fi
 }
 
 build_docker_image() {
@@ -136,7 +321,7 @@ build_docker_image() {
   )
 }
 
-while getopts "hd:c:pxb:" OPTION; do
+while getopts "hd:c:pxb:r" OPTION; do
   case ${OPTION} in
     h) usage; exit ;;
     d) DOCKER_CONTEXT_DIR=${OPTARG} ;;
@@ -144,9 +329,20 @@ while getopts "hd:c:pxb:" OPTION; do
     p) PUSH_IMAGES='true' ;;
     x) DOCKER_BUILD_COMMAND='docker buildx build --platform linux/amd64' ;;
     b) GLOBAL_BUILD_ARGS=${OPTARG};;
+    r) RESOLVE_ONLY='true' ;;
     \?) usage; exit ;;
   esac
 done
+
+if [[ "${RESOLVE_ONLY:-false}" == 'true' ]]; then
+  if [[ ! -s "${DOCKER_CONTEXT_DIR:-}/build.env" ]]; then
+    err "[ERROR] -r needs -d to name a directory containing a build.env"
+    exit 1
+  fi
+  source_dir=$(resolve_definition_dir "${DOCKER_CONTEXT_DIR}/build.env")
+  printf 'BUILT_IN_SOURCE\t%s\n' "${source_dir}"
+  exit 0
+fi
 
 DOCKER_CONTEXT_DIR=${DOCKER_CONTEXT_DIR:-"${DEFAULT_DOCKER_CONTEXT_DIR}"}
 PUSH_IMAGES=${PUSH_IMAGES:-'false'}
@@ -161,6 +357,12 @@ if [[ "${#IMAGES_TO_BUILD}" -eq 0 ]]; then
   exit
 fi
 
+BUILT_DIRS=""
 while read -r build_env_file; do
-  build_docker_image "${build_env_file}" "${GLOBAL_BUILD_ARGS}"
+  source_dir=$(resolve_definition_dir "${build_env_file}")
+  case "${BUILT_DIRS}" in
+    *$'\n'"${source_dir}"$'\n'*) continue ;;
+  esac
+  BUILT_DIRS="${BUILT_DIRS}"$'\n'"${source_dir}"$'\n'
+  build_docker_image "${source_dir}/build.env" "${GLOBAL_BUILD_ARGS}"
 done <<< "${IMAGES_TO_BUILD}"
