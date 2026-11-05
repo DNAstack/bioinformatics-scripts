@@ -38,7 +38,7 @@ cat << EOF
     -p  Also push built images
     -x  Use the 'docker buildx' command to build AMD-64 images (for example from an ARM-based Mac)
     -b  Comma-separated global build arguments (VAR=value,VAR2=value2). Will be passed to every image build.
-    -r  Print where the build.env in docker_context_dir resolves, then exit. Prints one line,
+    -r  Print where the build.env in the given directory resolves, then exit. Prints one line,
         BUILT_IN_SOURCE<TAB><absolute definition directory>; that is the directory itself
         unless its build.env sets BUILT_IN.
 
@@ -54,10 +54,18 @@ EOF
 }
 
 log() {
+  if [[ ! -t 1 ]]; then
+    echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')] $*"
+    return
+  fi
   echo "$(tput bold)$(tput setaf 110)[$(date +'%Y-%m-%dT%H:%M:%S%z')] $*$(tput sgr0)" >&1
 }
 
 err() {
+  if [[ ! -t 2 ]]; then
+    echo "$*" >&2
+    return
+  fi
   echo "$(tput bold)$(tput setaf 203)[$(date +'%Y-%m-%dT%H:%M:%S%z')]: $*$(tput sgr0)" >&2
 }
 
@@ -140,6 +148,31 @@ clone_search_dirs() {
   fi
 }
 
+# Print the clone directory for a repository name inside a search directory, if any.
+# An exact name wins; for github.com a directory differing only in case also counts,
+# because GitHub ignores case in repository names but a clone directory keeps the case it was given.
+find_clone_dir() {
+  local search_dir="$1"
+  local repo="$2"
+  local github="$3"
+  local entry want_lower
+  if [[ -d "${search_dir}/${repo}" ]]; then
+    printf '%s\n' "${search_dir}/${repo}"
+    return
+  fi
+  if [[ "${github}" != 'true' ]]; then
+    return
+  fi
+  want_lower=$(printf '%s' "${repo}" | tr '[:upper:]' '[:lower:]')
+  for entry in "${search_dir}"/*/; do
+    entry="${entry%/}"
+    if [[ -d "${entry}" && "$(printf '%s' "${entry##*/}" | tr '[:upper:]' '[:lower:]')" == "${want_lower}" ]]; then
+      printf '%s\n' "${entry}"
+      return
+    fi
+  done
+}
+
 # Print a fingerprint of the tracked files under a directory of a clone.
 definition_fingerprint() {
   local definition_dir="$1"
@@ -155,7 +188,7 @@ definition_fingerprint() {
 # Print the absolute directory that defines the image a pointer build.env names.
 pointer_source_dir() {
   local pointer_file="$1"
-  local name tag url want repo dir clone origin first_dir reasons
+  local name tag url want repo dir clone candidate github origin first_dir reasons
   local build_env_file found_name found_tag defined_tags fingerprint first_fingerprint
   local -a matches=()
 
@@ -166,6 +199,10 @@ pointer_source_dir() {
   repo="${url%/}"
   repo="${repo%.git}"
   repo="${repo##*[/:]}"
+  github=false
+  if [[ "${want}" == github.com/* ]]; then
+    github=true
+  fi
 
   first_dir=""
   reasons=""
@@ -174,16 +211,17 @@ pointer_source_dir() {
     if [[ -z "${first_dir}" ]]; then
       first_dir="${dir}"
     fi
-    if [[ ! -d "${dir}/${repo}" ]]; then
+    candidate=$(find_clone_dir "${dir}" "${repo}" "${github}")
+    if [[ -z "${candidate}" ]]; then
       reasons="${reasons:+${reasons}, }${dir}/${repo} (missing)"
       continue
     fi
-    origin=$(git -C "${dir}/${repo}" config --get remote.origin.url 2> /dev/null || true)
+    origin=$(git -C "${candidate}" config --get remote.origin.url 2> /dev/null || true)
     if [[ -n "${origin}" && "$(normalise_git_url "${origin}")" == "${want}" ]]; then
-      clone="${dir}/${repo}"
+      clone="${candidate}"
       break
     fi
-    reasons="${reasons:+${reasons}, }${dir}/${repo} (origin ${origin:-none})"
+    reasons="${reasons:+${reasons}, }${candidate} (origin ${origin:-none})"
   done < <(clone_search_dirs)
 
   if [[ -z "${clone}" ]]; then
@@ -321,7 +359,7 @@ build_docker_image() {
   )
 }
 
-while getopts "hd:c:pxb:r" OPTION; do
+while getopts "hd:c:pxb:r:" OPTION; do
   case ${OPTION} in
     h) usage; exit ;;
     d) DOCKER_CONTEXT_DIR=${OPTARG} ;;
@@ -329,17 +367,17 @@ while getopts "hd:c:pxb:r" OPTION; do
     p) PUSH_IMAGES='true' ;;
     x) DOCKER_BUILD_COMMAND='docker buildx build --platform linux/amd64' ;;
     b) GLOBAL_BUILD_ARGS=${OPTARG};;
-    r) RESOLVE_ONLY='true' ;;
+    r) RESOLVE_DIR=${OPTARG} ;;
     \?) usage; exit ;;
   esac
 done
 
-if [[ "${RESOLVE_ONLY:-false}" == 'true' ]]; then
-  if [[ ! -s "${DOCKER_CONTEXT_DIR:-}/build.env" ]]; then
-    err "[ERROR] -r needs -d to name a directory containing a build.env"
+if [[ -n "${RESOLVE_DIR:-}" ]]; then
+  if [[ ! -s "${RESOLVE_DIR}/build.env" ]]; then
+    err "[ERROR] -r needs a directory containing a build.env; ${RESOLVE_DIR} has none"
     exit 1
   fi
-  source_dir=$(resolve_definition_dir "${DOCKER_CONTEXT_DIR}/build.env")
+  source_dir=$(resolve_definition_dir "${RESOLVE_DIR}/build.env")
   printf 'BUILT_IN_SOURCE\t%s\n' "${source_dir}"
   exit 0
 fi

@@ -52,9 +52,9 @@ These variables have special meanings when the Docker image is being built. † 
 
 A `build.env` can set `BUILT_IN=<git URL>` to say its image is really built in another repository. The image named by `IMAGE_NAME` and `IMAGE_TAG` is then built from the one definition of it in a local clone of that repository, and a normal build builds each source definition once however many pointers name it. Two URLs name the same repository when their host and `owner/repo` agree after dropping a trailing `.git`, so SSH and HTTPS forms match (GitHub paths compare case-insensitively).
 
-The clone is `<dir>/<repository name>`, looked for in `$GIT_REPO_ROOT` (when set) and then in the directory that holds this repository's own clone. The first one whose `origin` matches wins; a same-named clone of another repository is skipped. If none matches, or the clone lacks the tag, or defines it twice with different contents, the build stops and says why.
+The clone is `<dir>/<repository name>`, looked for in `$GIT_REPO_ROOT` (when set) and then in the directory that holds this repository's own clone. The first one whose `origin` matches wins; a same-named clone of another repository is skipped. For GitHub URLs a clone directory differing from the repository name only in case also counts. If none matches, or the clone lacks the tag, or defines it twice with different contents, the build stops and says why.
 
-`build_docker_images -r -d <dir>` prints where the `build.env` in `<dir>` resolves, as the single line `BUILT_IN_SOURCE<TAB><absolute definition directory>` (the directory itself when there is no `BUILT_IN`), and builds nothing.
+`build_docker_images -r <dir>` prints where the `build.env` in `<dir>` resolves, as the single line `BUILT_IN_SOURCE<TAB><absolute definition directory>` (the directory itself when there is no `BUILT_IN`), and builds nothing.
 
 
 #### Usage
