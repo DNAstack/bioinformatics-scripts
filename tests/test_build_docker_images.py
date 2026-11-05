@@ -427,3 +427,39 @@ def test_refusal_carries_no_timestamp(script, pointer):
     result = run(script, "-r", str(pointer))
     assert result.returncode == 1
     assert result.stderr.startswith("tool:3 is built in")
+
+
+def test_build_refuses_before_building_anything_when_a_later_pointer_fails(
+    script, tmp_path, docker_log
+):
+    tree = tmp_path / "tree"
+    write_definition(tree / "a_plain", name="plain", tag="1")
+    write_definition(tree / "z_pointer", extra=f"BUILT_IN={SOURCE_URL}\n")
+    (tree / "z_pointer" / "Dockerfile").unlink()
+    result = run(
+        script,
+        "-d",
+        str(tree),
+        "-p",
+        env={"GIT_REPO_ROOT": str(tmp_path / "repos")},
+        docker_log=docker_log,
+    )
+    assert result.returncode == 1
+    assert f"tool:3 is built in {SOURCE_URL}" in result.stderr
+    assert docker_log.read_text() == ""
+
+
+def test_output_printed_by_a_build_env_is_not_read_as_a_value(
+    script, tmp_path, docker_log
+):
+    plain = tmp_path / "plain"
+    write_definition(plain, tag="1 && echo hello")
+    resolve = run(script, "-r", str(plain))
+    assert resolve.returncode == 0, resolve.stderr
+    assert resolve.stdout == resolved(plain)
+    build = run(script, "-d", str(plain), docker_log=docker_log)
+    assert build.returncode == 0, build.stderr
+    calls = docker_log.read_text().splitlines()
+    assert len(calls) == 1
+    assert "-t tool:1 " in calls[0]
+    assert f"-f {plain}/Dockerfile {plain}" in calls[0]

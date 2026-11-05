@@ -70,6 +70,7 @@ err() {
 }
 
 # Print the value of a variable as set by a build.env, or nothing if it is unset.
+# Whatever the build.env prints while being sourced is discarded, so it is never read as the value.
 build_env_var() {
   local build_env_file="$1"
   local var_name="$2"
@@ -77,7 +78,7 @@ build_env_var() {
     unset IMAGE_NAME IMAGE_TAG BUILT_IN
     set -a
     # shellcheck source=/dev/null
-    . "${build_env_file}"
+    . "${build_env_file}" > /dev/null 2>&1
     set +a
     printf '%s' "${!var_name:-}"
   )
@@ -394,18 +395,26 @@ GLOBAL_BUILD_ARGS=${GLOBAL_BUILD_ARGS:-}
 
 readonly DOCKER_CONTEXT_DIR CONTAINER_REGISTRY PUSH_IMAGES DOCKER_BUILD_COMMAND GLOBAL_BUILD_ARGS
 
-IMAGES_TO_BUILD=$(find "${DOCKER_CONTEXT_DIR}" -type f -name build.env)
+IMAGES_TO_BUILD=$(find "${DOCKER_CONTEXT_DIR}" -type f -name build.env | sort)
 if [[ "${#IMAGES_TO_BUILD}" -eq 0 ]]; then
   usage
   exit
 fi
 
-BUILT_DIRS=""
+# Resolve every build.env before building anything, so a pointer that cannot be followed
+# stops the run before any image is built or pushed. Each source definition is listed once.
+SOURCE_DIRS=""
 while read -r build_env_file; do
   source_dir=$(resolve_definition_dir "${build_env_file}")
-  case "${BUILT_DIRS}" in
+  case "${SOURCE_DIRS}" in
     *$'\n'"${source_dir}"$'\n'*) continue ;;
   esac
-  BUILT_DIRS="${BUILT_DIRS}"$'\n'"${source_dir}"$'\n'
-  build_docker_image "${source_dir}/build.env" "${GLOBAL_BUILD_ARGS}"
+  SOURCE_DIRS="${SOURCE_DIRS}"$'\n'"${source_dir}"$'\n'
 done <<< "${IMAGES_TO_BUILD}"
+
+while read -r source_dir; do
+  if [[ -z "${source_dir}" ]]; then
+    continue
+  fi
+  build_docker_image "${source_dir}/build.env" "${GLOBAL_BUILD_ARGS}"
+done <<< "${SOURCE_DIRS}"
