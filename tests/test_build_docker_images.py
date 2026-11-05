@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -408,3 +409,21 @@ def test_refusal_is_plain_text_when_stderr_is_not_a_terminal(script, pointer):
     assert "is built in" in result.stderr
     assert "\x1b" not in result.stderr
     assert "No value for $TERM" not in result.stderr
+
+
+def test_ordinary_error_keeps_its_timestamp_on_a_non_terminal(script, tmp_path):
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    (broken / "build.env").write_text("IMAGE_TAG=1\n")
+    (broken / "Dockerfile").write_text("FROM scratch\n")
+    result = run(script, "-d", str(broken))
+    assert result.returncode == 1
+    assert re.search(r"^\[\d{4}-\d\d-\d\dT[\d:+-]+\]: ", result.stderr)
+    assert "\x1b" not in result.stderr
+    assert "No IMAGE_NAME" in result.stderr
+
+
+def test_refusal_carries_no_timestamp(script, pointer):
+    result = run(script, "-r", str(pointer))
+    assert result.returncode == 1
+    assert result.stderr.startswith("tool:3 is built in")

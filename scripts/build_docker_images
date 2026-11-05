@@ -63,7 +63,7 @@ log() {
 
 err() {
   if [[ ! -t 2 ]]; then
-    echo "$*" >&2
+    echo "[$(date +'%Y-%m-%dT%H:%M:%S%z')]: $*" >&2
     return
   fi
   echo "$(tput bold)$(tput setaf 203)[$(date +'%Y-%m-%dT%H:%M:%S%z')]: $*$(tput sgr0)" >&2
@@ -225,7 +225,7 @@ pointer_source_dir() {
   done < <(clone_search_dirs)
 
   if [[ -z "${clone}" ]]; then
-    err "${name}:${tag} is built in ${url}, which is not cloned in ${reasons:-any directory}; run git clone ${url} \"${first_dir:-<dir>}/${repo}\", or set GIT_REPO_ROOT to the directory holding a clone of it"
+    refuse "${name}:${tag} is built in ${url}, which is not cloned in ${reasons:-any directory}; run git clone ${url} \"${first_dir:-<dir>}/${repo}\", or set GIT_REPO_ROOT to the directory holding a clone of it"
     return 1
   fi
 
@@ -247,7 +247,7 @@ pointer_source_dir() {
   done < <(find "${clone}" -name build.env -not -path '*/.git/*' | sort)
 
   if [[ "${#matches[@]}" -eq 0 ]]; then
-    err "the pointer wants ${name}:${tag}, the clone defines ${defined_tags:-no ${name} image} (${clone})"
+    refuse "the pointer wants ${name}:${tag}, the clone defines ${defined_tags:-no ${name} image} (${clone})"
     return 1
   fi
 
@@ -255,7 +255,7 @@ pointer_source_dir() {
   for dir in "${matches[@]}"; do
     fingerprint=$(definition_fingerprint "${dir}")
     if [[ "${fingerprint}" != "${first_fingerprint}" ]]; then
-      err "${name}:${tag} is defined more than once in ${clone} with different contents: ${matches[*]}"
+      refuse "${name}:${tag} is defined more than once in ${clone} with different contents: ${matches[*]}"
       return 1
     fi
   done
@@ -271,6 +271,11 @@ resolve_definition_dir() {
   else
     (cd "$(dirname "${build_env_file}")" && pwd -P)
   fi
+}
+
+# Print a pointer-resolution refusal as bare text: callers relay it verbatim inside their own message.
+refuse() {
+  echo "$*" >&2
 }
 
 build_docker_image() {
@@ -374,7 +379,7 @@ done
 
 if [[ -n "${RESOLVE_DIR:-}" ]]; then
   if [[ ! -s "${RESOLVE_DIR}/build.env" ]]; then
-    err "[ERROR] -r needs a directory containing a build.env; ${RESOLVE_DIR} has none"
+    refuse "[ERROR] -r needs a directory containing a build.env; ${RESOLVE_DIR} has none"
     exit 1
   fi
   source_dir=$(resolve_definition_dir "${RESOLVE_DIR}/build.env")
