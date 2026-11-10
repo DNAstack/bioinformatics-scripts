@@ -38,6 +38,7 @@ cat << EOF
     -p  Also push built images
     -x  Use the 'docker buildx' command to build AMD-64 images (for example from an ARM-based Mac)
     -b  Comma-separated global build arguments (VAR=value,VAR2=value2). Will be passed to every image build.
+    -l  Add a label to every image built (KEY=VALUE). Repeat for more than one.
     -r  Print where the build.env in the given directory resolves, then exit. Prints one line,
         BUILT_IN_SOURCE<TAB><absolute definition directory>; that is the directory itself
         unless its build.env sets BUILT_IN.
@@ -354,6 +355,7 @@ build_docker_image() {
     ${DOCKER_BUILD_COMMAND} \
       --rm \
       "${build_args[@]}" \
+      "${LABEL_ARGS[@]+"${LABEL_ARGS[@]}"}" \
       -t "${tagged_image}" \
       -f "${dockerfile}" \
       "${docker_context_dir}"
@@ -365,7 +367,8 @@ build_docker_image() {
   )
 }
 
-while getopts "hd:c:pxb:r:" OPTION; do
+LABEL_ARGS=()
+while getopts "hd:c:pxb:r:l:" OPTION; do
   case ${OPTION} in
     h) usage; exit ;;
     d) DOCKER_CONTEXT_DIR=${OPTARG} ;;
@@ -374,6 +377,7 @@ while getopts "hd:c:pxb:r:" OPTION; do
     x) DOCKER_BUILD_COMMAND='docker buildx build --platform linux/amd64' ;;
     b) GLOBAL_BUILD_ARGS=${OPTARG};;
     r) RESOLVE_DIR=${OPTARG} ;;
+    l) LABEL_ARGS+=(--label "${OPTARG}") ;;
     \?) usage; exit ;;
   esac
 done
