@@ -473,3 +473,53 @@ def test_errors_from_a_build_env_still_reach_stderr_when_resolving(script, tmp_p
     resolve = run(script, "-r", str(plain))
     assert resolve.stdout == resolved(plain)
     assert "nosuchcommand_in_build_env" in resolve.stderr
+
+
+def test_each_label_is_passed_to_the_build(script, tmp_path, docker_log):
+    plain = tmp_path / "plain"
+    write_definition(plain)
+    result = run(
+        script,
+        "-d",
+        str(plain),
+        "-l",
+        "a=1",
+        "-l",
+        "org.dnastack.build.owner=repo:feature/x",
+        docker_log=docker_log,
+    )
+    assert result.returncode == 0, result.stderr
+    (call,) = docker_log.read_text().splitlines()
+    assert call.startswith("build ")
+    assert "--label a=1" in call
+    assert "--label org.dnastack.build.owner=repo:feature/x" in call
+
+
+def test_labels_reach_a_buildx_build(script, tmp_path, docker_log):
+    plain = tmp_path / "plain"
+    write_definition(plain)
+    result = run(
+        script,
+        "-d",
+        str(plain),
+        "-x",
+        "-l",
+        "a=1",
+        "-l",
+        "b=2",
+        docker_log=docker_log,
+    )
+    assert result.returncode == 0, result.stderr
+    (call,) = docker_log.read_text().splitlines()
+    assert call.startswith("buildx build ")
+    assert "--label a=1" in call
+    assert "--label b=2" in call
+
+
+def test_without_labels_the_build_command_is_unchanged(script, tmp_path, docker_log):
+    plain = tmp_path / "plain"
+    write_definition(plain)
+    result = run(script, "-d", str(plain), docker_log=docker_log)
+    assert result.returncode == 0, result.stderr
+    (call,) = docker_log.read_text().splitlines()
+    assert "--label" not in call
